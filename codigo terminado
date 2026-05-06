@@ -1,0 +1,244 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace SistemaBancario
+{
+    public interface ITransferible
+    {
+        void Transferir(decimal monto, ITransferible destino);
+        string NumeroCuenta { get; }
+        string Titular { get; }
+        void RecibirTransferencia(decimal monto);
+    }
+
+    public abstract class Cuenta
+    {
+        public string NumeroCuenta { get; protected set; }
+        public string Titular { get; protected set; }
+        public decimal Saldo { get; protected set; }
+
+        protected Cuenta(string titular, decimal saldoInicial)
+        {
+            if (string.IsNullOrWhiteSpace(titular)) 
+                throw new ArgumentException("El titular no puede estar vacío.");
+            if (saldoInicial < 0) 
+                throw new ArgumentException("No se pueden crear cuentas con saldos negativos.");
+
+            Titular = titular;
+            Saldo = saldoInicial;
+            NumeroCuenta = "CBU-" + Guid.NewGuid().ToString().Substring(0, 5).ToUpper();
+        }
+
+        public void Depositar(decimal monto)
+        {
+            if (monto > 0) Saldo += monto;
+        }
+
+        public abstract bool Retirar(decimal monto);
+
+        public void MostrarEstado()
+        {
+            string tipo = this.GetType().Name == "CajaAhorro" ? "Caja Ahorro  " : "Cta Corriente";
+            Console.WriteLine($" > [{tipo}] CBU: {NumeroCuenta} | Titular: {Titular.PadRight(10)} | Saldo: ${Saldo:N2}");
+        }
+    }
+
+    public class CajaAhorro : Cuenta, ITransferible
+    {
+        public CajaAhorro(string titular, decimal saldo) : base(titular, saldo) { }
+        
+        public override bool Retirar(decimal monto)
+        {
+            if (monto > 0 && Saldo >= monto) { Saldo -= monto; return true; }
+            return false;
+        }
+        
+        public void Transferir(decimal monto, ITransferible destino) 
+        { 
+            if (Retirar(monto)) destino.RecibirTransferencia(monto); 
+        }
+        
+        public void RecibirTransferencia(decimal monto) => Depositar(monto);
+    }
+
+    public class CuentaCorriente : Cuenta, ITransferible
+    {
+        private decimal limiteDescubierto = -10000;
+
+        public CuentaCorriente(string titular, decimal saldo) : base(titular, saldo) { }
+
+        public override bool Retirar(decimal monto)
+        {
+            if (monto > 0 && (Saldo - monto) >= limiteDescubierto)
+            {
+                Saldo -= monto;
+                return true;
+            }
+            return false;
+        }
+
+        public void Transferir(decimal monto, ITransferible destino)
+        {
+            if (Retirar(monto))
+                destino.RecibirTransferencia(monto);
+        }
+
+        public void RecibirTransferencia(decimal monto)
+        {
+            Depositar(monto);
+        }
+    }
+
+    public class Banco
+    {
+        private List<Cuenta> cuentas = new List<Cuenta>();
+
+        public void AgregarCuenta(Cuenta cuenta)
+        {
+            cuentas.Add(cuenta);
+        }
+
+        public void MostrarCuentas()
+        {
+            Console.WriteLine("--- ESTADO GENERAL DEL BANCO ---");
+            foreach (var cuenta in cuentas)
+            {
+                cuenta.MostrarEstado();
+            }
+        }
+
+        public Cuenta BuscarCuentaExacta(string nombre)
+        {
+            return cuentas.FirstOrDefault(c => c.Titular.Equals(nombre, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    class Program
+    {
+        static Banco miBanco = new Banco();
+
+        static void Main(string[] args)
+        {
+            miBanco.AgregarCuenta(new CajaAhorro("juan", 5000));
+            miBanco.AgregarCuenta(new CuentaCorriente("ana", 2000));
+
+            bool salir = false;
+            while (!salir) 
+            {
+                Console.Clear();
+                Console.WriteLine("=====================================");
+                Console.WriteLine("    MOTOR CORE BANCARIO     ");
+                Console.WriteLine("=====================================");
+                Console.WriteLine("1. Reporte de todas las cuentas");
+                Console.WriteLine("2. Depositar");
+                Console.WriteLine("3. Retirar");
+                Console.WriteLine("4. Transferir");
+                Console.WriteLine("5. Salir");
+                Console.WriteLine("-------------------------------------");
+                Console.Write("Seleccione una opción: ");
+
+                string opcion = Console.ReadLine();
+                Console.WriteLine();
+
+                switch (opcion)
+                {
+                    case "1": miBanco.MostrarCuentas(); break;
+                    case "2": EjecutarDeposito(); break;
+                    case "3": EjecutarRetiro(); break;
+                    case "4": EjecutarTransferencia(); break;
+                    case "5": salir = true; break;
+                    default: Console.WriteLine("Opción no válida."); break;
+                }
+
+                if (!salir)
+                {
+                    Console.WriteLine("\nPresione cualquier tecla para continuar...");
+                    Console.ReadKey();
+                }
+            }
+        }
+
+        static void EjecutarDeposito()
+        {
+            Cuenta c = BuscarCuentaInteractiva();
+            if (c == null) return;
+            
+            Console.Write("Monto a depositar: $");
+            if (decimal.TryParse(Console.ReadLine(), out decimal monto))
+            {
+                c.Depositar(monto);
+                Console.WriteLine("\n[✓] DEPÓSITO ACREDITADO. Estado actualizado:");
+                c.MostrarEstado();
+            }
+        }
+
+        static void EjecutarRetiro()
+        {
+            Cuenta c = BuscarCuentaInteractiva();
+            if (c == null) return;
+            
+            Console.Write("Monto a retirar: $");
+            if (decimal.TryParse(Console.ReadLine(), out decimal monto))
+            {
+                if (c.Retirar(monto))
+                {
+                    Console.WriteLine("\n[✓] RETIRO EXITOSO. Estado actualizado:");
+                    c.MostrarEstado();
+                }
+                else
+                {
+                    Console.WriteLine("\n[X] ERROR: Fondos insuficientes o límite de descubierto superado.");
+                }
+            }
+        }
+        static void EjecutarTransferencia()
+        {
+            Console.WriteLine("--- SELECCIONE ORIGEN ---");
+            Cuenta origen = BuscarCuentaInteractiva();
+            if (origen == null) return;
+
+            Console.WriteLine("\n--- SELECCIONE DESTINO ---");
+            Cuenta destino = BuscarCuentaInteractiva();
+            if (destino == null) return;
+
+            if (origen == destino)
+            {
+                Console.WriteLine("\n[X] ERROR: No se puede transferir a la misma cuenta.");
+                return;
+            }
+
+            Console.Write("\nMonto a transferir: $");
+            if (decimal.TryParse(Console.ReadLine(), out decimal monto))
+            {
+                decimal saldoAnterior = origen.Saldo;
+                
+                ((ITransferible)origen).Transferir(monto, (ITransferible)destino);
+
+                if (origen.Saldo < saldoAnterior)
+                {
+                    Console.WriteLine("\n[✓] TRANSFERENCIA REALIZADA CON EXITO.");
+                    Console.WriteLine("Estado actualizado de AMBAS cuentas:");
+                    origen.MostrarEstado();
+                    destino.MostrarEstado();
+                }
+                else
+                {
+                    Console.WriteLine("\n[X] ERROR: Fondos insuficientes para transferir.");
+                }
+            }
+        }
+        static Cuenta BuscarCuentaInteractiva()
+        {
+            Console.Write("Ingrese el nombre exacto del titular: ");
+            string nombre = Console.ReadLine();
+            
+            Cuenta cuenta = miBanco.BuscarCuentaExacta(nombre);
+            
+            if (cuenta == null) 
+                Console.WriteLine("[X] Cuenta no encontrada.");
+                
+            return cuenta;
+        }
+    }
+}
